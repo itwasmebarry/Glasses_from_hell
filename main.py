@@ -3,118 +3,88 @@ import numpy as np
 import random
 from ultralytics import YOLO
 
-# --- ENGINEERING ASSETS: PROCEDURAL DRAWING FUNCTIONS ---
+# --- CALORIE DATABASE (The Engineering Estimates) ---
+# Units are roughly "Per Serving" or "Per Item"
+calorie_map = {
+    # Healthy
+    46: 105, # Banana
+    47: 95,  # Apple
+    48: 300, # Sandwich (Average)
+    49: 45,  # Orange
+    50: 31,  # Broccoli (1 cup)
+    51: 25,  # Carrot
+    # Junk
+    52: 290, # Hot Dog
+    53: 285, # Pizza (Per Slice estimate)
+    54: 195, # Donut
+    55: 260, # Cake (Slice)
+    39: 150, # Bottle (assuming sugary drink)
+    41: 140, # Cup
+}
 
+# --- PROCEDURAL ASSETS (Roaches & Halos) ---
 def draw_roach(img, x, y, angle):
-    """
-    Draws a procedural cockroach at (x,y) with a specific rotation.
-    No external image files required. Pure OpenCV geometry.
-    """
-    # Create a local coordinate system for the roach
-    # Body color: Dark Brown
     color = (20, 35, 70) 
+    body_len, head_len = 15, 5
     
-    # We rotate the drawing canvas manually by calculating offsets
-    # Length of roach parts
-    body_len = 15
-    head_len = 5
-    
-    # 1. Draw Legs (6 legs) - Simple lines jittering
+    # Legs
     for i in range(-1, 2):
-        # Left legs
-        lx1 = int(x + i * 5)
-        ly1 = int(y + 5)
-        lx2 = int(x + (i * 8) - 15)
-        ly2 = int(y + 15)
+        lx1, ly1 = int(x + i*5), int(y + 5)
+        lx2, ly2 = int(x + (i*8) - 15), int(y + 15)
         cv2.line(img, (lx1, ly1), (lx2, ly2), color, 1)
-        
-        # Right legs
-        rx1 = int(x + i * 5)
-        ry1 = int(y - 5)
-        rx2 = int(x + (i * 8) - 15)
-        ry2 = int(y - 15)
+        rx1, ry1 = int(x + i*5), int(y - 5)
+        rx2, ry2 = int(x + (i*8) - 15), int(y - 15)
         cv2.line(img, (rx1, ry1), (rx2, ry2), color, 1)
 
-    # 2. Draw Body (Ellipse)
+    # Body & Head
     cv2.ellipse(img, (x, y), (body_len, 7), angle, 0, 360, color, -1)
-    
-    # 3. Draw Head (Small Ellipse offset)
-    # Calculate head position based on angle
     rad = np.deg2rad(angle)
-    hx = int(x + (body_len - 2) * np.cos(rad))
-    hy = int(y + (body_len - 2) * np.sin(rad))
+    hx, hy = int(x + (body_len-2)*np.cos(rad)), int(y + (body_len-2)*np.sin(rad))
     cv2.circle(img, (hx, hy), head_len, color, -1)
 
-    # 4. Antennae (Long thin lines from head)
+    # Antennae
     ant_len = 25
-    # Left antenna
-    ax1 = int(hx + ant_len * np.cos(rad - 0.5))
-    ay1 = int(hy + ant_len * np.sin(rad - 0.5))
+    ax1, ay1 = int(hx + ant_len*np.cos(rad-0.5)), int(hy + ant_len*np.sin(rad-0.5))
+    ax2, ay2 = int(hx + ant_len*np.cos(rad+0.5)), int(hy + ant_len*np.sin(rad+0.5))
     cv2.line(img, (hx, hy), (ax1, ay1), color, 1)
-    # Right antenna
-    ax2 = int(hx + ant_len * np.cos(rad + 0.5))
-    ay2 = int(hy + ant_len * np.sin(rad + 0.5))
     cv2.line(img, (hx, hy), (ax2, ay2), color, 1)
 
 class RoachSwarm:
-    """Manages a swarm of roaches for a specific target box"""
     def __init__(self):
-        self.roaches = [] # List of [x, y, angle, speed_x, speed_y]
+        self.roaches = [] 
 
     def update(self, x1, y1, x2, y2, frame):
-        # Spawn roaches if too few (cap at 8 per item)
         if len(self.roaches) < 8:
-            # Spawn at random edge of box
-            rx = random.randint(x1, x2)
-            ry = random.randint(y1, y2)
+            rx, ry = random.randint(x1, x2), random.randint(y1, y2)
             self.roaches.append([rx, ry, random.randint(0, 360), 0, 0])
 
-        # Move roaches
         for r in self.roaches:
-            # Jitter movement
-            r[3] += random.uniform(-2, 2) # Change velocity X
-            r[4] += random.uniform(-2, 2) # Change velocity Y
-            
-            # Dampen velocity (friction)
-            r[3] *= 0.9
-            r[4] *= 0.9
-            
-            # Update Position
-            r[0] += int(r[3])
-            r[1] += int(r[4])
-            
-            # Keep inside the box (roughly)
+            r[3] += random.uniform(-2, 2)
+            r[4] += random.uniform(-2, 2)
+            r[3] *= 0.9; r[4] *= 0.9
+            r[0] += int(r[3]); r[1] += int(r[4])
             r[0] = np.clip(r[0], x1, x2)
             r[1] = np.clip(r[1], y1, y2)
-            
-            # Orient head towards movement
             if abs(r[3]) > 0.1 or abs(r[4]) > 0.1:
                 r[2] = np.degrees(np.arctan2(r[4], r[3]))
-
-            # Draw
             draw_roach(frame, int(r[0]), int(r[1]), int(r[2]))
 
-# --- MAIN APPLICATION ---
-
-# 1. Load Model
+# --- MAIN APP ---
 model = YOLO('yolov8n.pt') 
 cap = cv2.VideoCapture(0)
 
-# 2. Config
 healthy_ids = [46, 47, 48, 49, 50, 51] 
-junk_ids = [52, 53, 54, 55, 41, 39] # Added drinks to junk for testing
-swarms = {} # Dictionary to store a swarm for each tracked object ID
-
-print("System Active. Show food.")
+junk_ids = [52, 53, 54, 55, 39, 41] 
+swarms = {} 
 
 while True:
     success, frame = cap.read()
     if not success: break
-    
-    # Copy frame for "Divine Blur" calculations
     clean_frame = frame.copy()
+    
+    # Variables to calculate total screen calories
+    total_screen_cals = 0
 
-    # Track=True gives us stable IDs (so the roach remembers which pizza it's on)
     results = model.track(frame, persist=True, verbose=False)
 
     if results[0].boxes.id is not None:
@@ -125,57 +95,52 @@ while True:
         for box, track_id, cls in zip(boxes, ids, clss):
             x1, y1, x2, y2 = box
             
-            # --- JUNK FOOD (ROACH SWARM) ---
-            if cls in junk_ids:
-                # 1. The Mold Filter (Cold/Dead colors)
-                roi = frame[y1:y2, x1:x2]
-                roi[:, :, 2] = 0 # Kill Red channel
-                frame[y1:y2, x1:x2] = roi # Paste back
+            # GET CALORIES
+            cals = calorie_map.get(cls, 0) # Default to 0 if unknown
+            total_screen_cals += cals
+            cal_text = f"{cals} kcal"
 
-                # 2. The Animation System
-                # Initialize a swarm for this specific object ID if not exists
-                if track_id not in swarms:
-                    swarms[track_id] = RoachSwarm()
-                
-                # Update and Draw Roaches
+            # --- JUNK FOOD LOGIC ---
+            if cls in junk_ids:
+                roi = frame[y1:y2, x1:x2]
+                roi[:, :, 2] = 0 # Kill Red
+                frame[y1:y2, x1:x2] = roi 
+
+                if track_id not in swarms: swarms[track_id] = RoachSwarm()
                 swarms[track_id].update(x1, y1, x2, y2, frame)
                 
-                # Label
+                # Draw Warning Box
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                cv2.putText(frame, "INFESTED", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2)
+                # Draw Calorie Label (Red Background)
+                cv2.rectangle(frame, (x1, y1-30), (x1+120, y1), (0, 0, 255), -1)
+                cv2.putText(frame, cal_text, (x1+5, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
 
-            # --- HEALTHY FOOD (DIVINE BEAUTIFICATION) ---
+            # --- HEALTHY FOOD LOGIC ---
             elif cls in healthy_ids:
-                # 1. Saturation Boost
+                # Beautify
                 roi = clean_frame[y1:y2, x1:x2]
                 hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV).astype("float32")
-                (h, s, v) = cv2.split(hsv)
-                s = s * 1.5 # Boost saturation by 50%
-                v = v * 1.2 # Boost brightness by 20%
-                s = np.clip(s, 0, 255)
-                v = np.clip(v, 0, 255)
-                hsv = cv2.merge([h, s, v])
-                enhanced_roi = cv2.cvtColor(hsv.astype("uint8"), cv2.COLOR_HSV2BGR)
-                
-                # 2. Soft Bloom/Glow
-                blur = cv2.GaussianBlur(enhanced_roi, (21, 21), 0)
-                enhanced_roi = cv2.addWeighted(enhanced_roi, 0.6, blur, 0.4, 0)
-                
-                # Paste the beautiful fruit back
-                frame[y1:y2, x1:x2] = enhanced_roi
+                h, s, v = cv2.split(hsv)
+                s, v = s*1.5, v*1.2
+                hsv = cv2.merge([h, np.clip(s, 0, 255), np.clip(v, 0, 255)])
+                enhanced = cv2.cvtColor(hsv.astype("uint8"), cv2.COLOR_HSV2BGR)
+                frame[y1:y2, x1:x2] = cv2.addWeighted(enhanced, 0.7, cv2.GaussianBlur(enhanced,(21,21),0), 0.5, 0)
 
-                # 3. Procedural Halo
-                center_x = int((x1 + x2) / 2)
-                # Draw Halo Ellipse floating above
-                cv2.ellipse(frame, (center_x, y1 - 30), (int((x2-x1)/2), 10), 
-                            0, 0, 360, (0, 255, 255), 2) # Yellow ring
-                # Add "Glow" to the halo (draw it again thicker and blurrier)
-                cv2.ellipse(frame, (center_x, y1 - 30), (int((x2-x1)/2), 10), 
-                            0, 0, 360, (150, 255, 255), 6) 
+                # Halo
+                cx = int((x1+x2)/2)
+                cv2.ellipse(frame, (cx, y1-30), (int((x2-x1)/2), 10), 0, 0, 360, (150, 255, 255), 4) 
                 
-                cv2.putText(frame, "DIVINE", (x1, y1-50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,255), 2)
+                # Draw Calorie Label (Gold Background)
+                cv2.rectangle(frame, (x1, y1-30), (x1+120, y1), (0, 215, 255), -1)
+                cv2.putText(frame, cal_text, (x1+5, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 2)
 
-    cv2.imshow("The Judge", frame)
+    # --- TOTAL CALORIE DASHBOARD ---
+    # Display the total detected calories in the top left
+    cv2.rectangle(frame, (10, 10), (300, 60), (50, 50, 50), -1) # Dark bg
+    cv2.putText(frame, f"TOTAL: {total_screen_cals} kcal", (20, 45), 
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+    cv2.imshow("Calorie Roach Cam", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
