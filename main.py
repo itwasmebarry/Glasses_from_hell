@@ -125,6 +125,17 @@ if pipeline is None:
 else:
     cap = None
 
+# Initialize audio once at startup
+audio_initialized = False
+if PYGAME_AVAILABLE:
+    try:
+        pygame.mixer.init()
+        pygame.mixer.music.load("audio/idiot_sanwhich_audio.mp3")
+        audio_initialized = True
+    except Exception as e:
+        print(f"Audio initialization error: {e}")
+        audio_initialized = False
+
 while True:
     if pipeline is not None:
         frames = pipeline.wait_for_frames()
@@ -141,6 +152,7 @@ while True:
     
     # Variables to calculate total screen calories
     total_screen_cals = 0
+    junk_food_detected = False
     
     # Read video frame once per loop
     overlay_frame = None
@@ -168,6 +180,7 @@ while True:
 
             # --- JUNK FOOD LOGIC ---
             if cls in junk_ids:
+                junk_food_detected = True
                 roi = frame[y1:y2, x1:x2]
                 #roi[:, :, 2] = 0 # Kill Red
                 frame[y1:y2, x1:x2] = roi 
@@ -189,16 +202,8 @@ while True:
                         resized_overlay = cv2.resize(overlay_frame, (roi.shape[1], roi.shape[0]))
                         frame[y1:y2, x1:x2] = cv2.addWeighted(roi, 0.3, resized_overlay, 0.7, 0)
                         
-                        # Play audio (requires pygame for audio playback)
-                        if PYGAME_AVAILABLE and not hasattr(draw_roach, 'audio_initialized'):
-                            try:
-                                pygame.mixer.init()
-                                pygame.mixer.music.load("audio/idiot_sanwhich_audio.mp3")
-                                pygame.mixer.music.play(-1)  # -1 for loop
-                                draw_roach.audio_initialized = True
-                            except Exception as e:
-                                print(f"Audio error: {e}")
-                                draw_roach.audio_initialized = False
+                        if audio_initialized and pygame.mixer.music.get_busy() == 0:
+                            pygame.mixer.music.play(-1)  # -1 for loop
 
 
             # --- HEALTHY FOOD LOGIC ---
@@ -219,6 +224,10 @@ while True:
                 # Draw Calorie Label (Gold Background)
                 cv2.rectangle(frame, (x1, y1-30), (x1+120, y1), (0, 215, 255), -1)
                 cv2.putText(frame, cal_text, (x1+5, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 2)
+
+    # Stop audio if no junk food is detected
+    if audio_initialized and not junk_food_detected and pygame.mixer.music.get_busy():
+        pygame.mixer.music.stop()
 
     # --- TOTAL CALORIE DASHBOARD ---
     # Display the total detected calories in the top left
