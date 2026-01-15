@@ -3,6 +3,21 @@ import numpy as np
 import random
 from ultralytics import YOLO
 
+
+try:
+    import pyrealsense2 as rs
+    REALSENSE_AVAILABLE = True
+except ImportError:
+    REALSENSE_AVAILABLE = False
+    print("pyrealsense2 not available, will use regular webcam")
+
+try:
+    import pygame
+    PYGAME_AVAILABLE = True
+except ImportError:
+    PYGAME_AVAILABLE = False
+    print("pygame not available, audio will be disabled")
+
 # --- CALORIE DATABASE (The Engineering Estimates) ---
 # Units are roughly "Per Serving" or "Per Item"
 calorie_map = {
@@ -71,21 +86,72 @@ class RoachSwarm:
 
 # --- MAIN APP ---
 model = YOLO('yolov8n.pt') 
-cap = cv2.VideoCapture(0)
+
+pipeline = None
+if REALSENSE_AVAILABLE:
+    try:
+        pipeline = rs.pipeline()
+        config = rs.config()
+        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+        pipeline.start(config)
+        print("RealSense camera initialized successfully")
+    except Exception as e:
+        print(f"Error initializing RealSense camera: {e}")
+        print("Falling back to regular webcam...")
+        pipeline = None
+else:
+    print("RealSense not available, using regular webcam...")
 
 healthy_ids = [46, 47, 48, 49, 50, 51] 
 junk_ids = [52, 53, 54, 55, 39, 41] 
-swarms = {} 
+swarms = {}
+
+# Load idiot sandwich video once at startup
+try:
+    idiot_sandwich_video = cv2.VideoCapture("audio/idiot_sandwich.mp4")
+    if not idiot_sandwich_video.isOpened():
+        idiot_sandwich_video = None
+        print("Warning: Could not load idiot_sandwich.mp4")
+except Exception as e:
+    idiot_sandwich_video = None
+    print(f"Warning: Error loading video: {e}")
+
+
+if pipeline is None:
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Could not open webcam")
+        exit()
+else:
+    cap = None
 
 while True:
-    success, frame = cap.read()
-    if not success: break
+    if pipeline is not None:
+        frames = pipeline.wait_for_frames()
+        color_frame = frames.get_color_frame()
+        if not color_frame:
+            continue
+        frame = np.asanyarray(color_frame.get_data())
+    else:
+        success, frame = cap.read()
+        if not success:
+            break
+    
     clean_frame = frame.copy()
     
     # Variables to calculate total screen calories
     total_screen_cals = 0
+    
+    # Read video frame once per loop
+    overlay_frame = None
+    if idiot_sandwich_video is not None and idiot_sandwich_video.isOpened():
+        ret, overlay_frame = idiot_sandwich_video.read()
+        if not ret:
+            idiot_sandwich_video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, overlay_frame = idiot_sandwich_video.read()
 
     results = model.track(frame, persist=True, verbose=False)
+    #print(results)
 
     if results[0].boxes.id is not None:
         boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
@@ -103,7 +169,7 @@ while True:
             # --- JUNK FOOD LOGIC ---
             if cls in junk_ids:
                 roi = frame[y1:y2, x1:x2]
-                roi[:, :, 2] = 0 # Kill Red
+                #roi[:, :, 2] = 0 # Kill Red
                 frame[y1:y2, x1:x2] = roi 
 
                 if track_id not in swarms: swarms[track_id] = RoachSwarm()
@@ -114,6 +180,26 @@ while True:
                 # Draw Calorie Label (Red Background)
                 cv2.rectangle(frame, (x1, y1-30), (x1+120, y1), (0, 0, 255), -1)
                 cv2.putText(frame, cal_text, (x1+5, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+
+                # adding the video of idiot sandwich mp4 onto the overlay 
+                if overlay_frame is not None:
+                    box_width, box_height = x2 - x1, y2 - y1
+                    if box_width > 0 and box_height > 0:
+                        roi = frame[y1:y2, x1:x2]
+                        resized_overlay = cv2.resize(overlay_frame, (roi.shape[1], roi.shape[0]))
+                        frame[y1:y2, x1:x2] = cv2.addWeighted(roi, 0.3, resized_overlay, 0.7, 0)
+                        
+                        # Play audio (requires pygame for audio playback)
+                        if PYGAME_AVAILABLE and not hasattr(draw_roach, 'audio_initialized'):
+                            try:
+                                pygame.mixer.init()
+                                pygame.mixer.music.load("audio/idiot_sanwhich_audio.mp3")
+                                pygame.mixer.music.play(-1)  # -1 for loop
+                                draw_roach.audio_initialized = True
+                            except Exception as e:
+                                print(f"Audio error: {e}")
+                                draw_roach.audio_initialized = False
+
 
             # --- HEALTHY FOOD LOGIC ---
             elif cls in healthy_ids:
@@ -144,5 +230,11 @@ while True:
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-cap.release()
+# Cleanup
+if pipeline is not None:
+    pipeline.stop()
+if cap is not None:
+    cap.release()
+if idiot_sandwich_video is not None:
+    idiot_sandwich_video.release()
 cv2.destroyAllWindows()
