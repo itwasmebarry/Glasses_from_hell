@@ -117,6 +117,17 @@ except Exception as e:
     print(f"Warning: Error loading video: {e}")
 
 
+# Load idiot sandwich video once at startup
+try:
+    justdoit_video = cv2.VideoCapture("audio/justdoit.mp4")
+    if not justdoit_video.isOpened():
+        justdoit_video = None
+        print("Warning: Could not load justdoit.mp4")
+except Exception as e:
+    justdoit_video = None
+    print(f"Warning: Error loading video: {e}")
+
+
 if pipeline is None:
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -153,6 +164,7 @@ while True:
     # Variables to calculate total screen calories
     total_screen_cals = 0
     junk_food_detected = False
+    healthy_food_detected = False
     
     # Read video frame once per loop
     overlay_frame = None
@@ -161,6 +173,13 @@ while True:
         if not ret:
             idiot_sandwich_video.set(cv2.CAP_PROP_POS_FRAMES, 0)
             ret, overlay_frame = idiot_sandwich_video.read()
+
+    overlay_frame_just_do_it = None
+    if justdoit_video is not None and justdoit_video.isOpened():
+        ret, overlay_frame_just_do_it = justdoit_video.read()
+        if not ret:
+            justdoit_video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, overlay_frame_just_do_it = justdoit_video.read()
 
     results = model.track(frame, persist=True, verbose=False)
     #print(results)
@@ -216,7 +235,7 @@ while True:
                 hsv = cv2.merge([h, np.clip(s, 0, 255), np.clip(v, 0, 255)])
                 enhanced = cv2.cvtColor(hsv.astype("uint8"), cv2.COLOR_HSV2BGR)
                 frame[y1:y2, x1:x2] = cv2.addWeighted(enhanced, 0.7, cv2.GaussianBlur(enhanced,(21,21),0), 0.5, 0)
-
+                healthy_food_detected = True
                 # Halo
                 cx = int((x1+x2)/2)
                 cv2.ellipse(frame, (cx, y1-30), (int((x2-x1)/2), 10), 0, 0, 360, (150, 255, 255), 4) 
@@ -225,8 +244,23 @@ while True:
                 cv2.rectangle(frame, (x1, y1-30), (x1+120, y1), (0, 215, 255), -1)
                 cv2.putText(frame, cal_text, (x1+5, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 2)
 
+                #adding overlay for healthy food
+                if overlay_frame_just_do_it is not None:
+                    box_width, box_height = x2 - x1, y2 - y1
+                    if box_width > 0 and box_height > 0:
+                        roi = frame[y1:y2, x1:x2]
+                        resized_overlay = cv2.resize(overlay_frame_just_do_it, (roi.shape[1], roi.shape[0]))
+                        frame[y1:y2, x1:x2] = cv2.addWeighted(roi, 0.3, resized_overlay, 0.7, 0)
+                        
+                        if audio_initialized and pygame.mixer.music.get_busy() == 0:
+                            pygame.mixer.music.play(-1)  # -1 for loop
+
     # Stop audio if no junk food is detected
     if audio_initialized and not junk_food_detected and pygame.mixer.music.get_busy():
+        pygame.mixer.music.stop()
+
+    # Stop audio if no healthy food is detected
+    if audio_initialized and not healthy_food_detected and pygame.mixer.music.get_busy():
         pygame.mixer.music.stop()
 
     # --- TOTAL CALORIE DASHBOARD ---
@@ -246,4 +280,6 @@ if cap is not None:
     cap.release()
 if idiot_sandwich_video is not None:
     idiot_sandwich_video.release()
+if justdoit_video is not None:
+    justdoit_video.release()
 cv2.destroyAllWindows()
